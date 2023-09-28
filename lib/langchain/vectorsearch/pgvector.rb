@@ -18,7 +18,7 @@ module Langchain::Vectorsearch
     }
     DEFAULT_OPERATOR = "cosine_distance"
 
-    attr_reader :db, :operator, :table_name, :namespace_column, :namespace, :documents_table
+    attr_reader :operator, :table_name, :namespace_column, :namespace, :documents_table
 
     # @param url [String] The URL of the PostgreSQL database
     # @param index_name [String] The name of the table to use for the index
@@ -27,8 +27,6 @@ module Langchain::Vectorsearch
     def initialize(url:, index_name:, llm:, namespace: nil)
       depends_on "sequel"
       depends_on "pgvector"
-
-      @db = Sequel.connect(url)
 
       @table_name = index_name
 
@@ -39,8 +37,12 @@ module Langchain::Vectorsearch
       super(llm: llm)
     end
 
+    def db
+      @db ||= documents_model.db
+    end
+
     def documents_model
-      Class.new(Sequel::Model(table_name.to_sym)) do
+      @documents_model ||= Class.new(Sequel::Model(table_name.to_sym)) do
         plugin :pgvector, :vectors
       end
     end
@@ -54,8 +56,7 @@ module Langchain::Vectorsearch
       data = texts.zip(ids).flat_map do |(text, id)|
         {id: id, content: text, vectors: llm.embed(text: text).to_s, namespace: namespace}
       end
-      # @db[table_name.to_sym].multi_insert(data, return: :primary_key)
-      @db[table_name.to_sym]
+      db[table_name.to_sym]
         .insert_conflict(
           target: :id,
           update: {content: Sequel[:excluded][:content], vectors: Sequel[:excluded][:vectors]}
@@ -73,7 +74,7 @@ module Langchain::Vectorsearch
           {content: text, vectors: llm.embed(text: text).to_s, namespace: namespace}
         end
 
-        @db[table_name.to_sym].multi_insert(data, return: :primary_key)
+        db[table_name.to_sym].multi_insert(data, return: :primary_key)
       else
         upsert_texts(texts: texts, ids: ids)
       end
